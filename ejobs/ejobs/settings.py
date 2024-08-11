@@ -38,7 +38,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'jobs.apps.JobsConfig',
+    'rest_framework',
     'oauth2_provider',
+    'drf_yasg',
+    'debug_toolbar',
 ]
 
 MIDDLEWARE = [
@@ -51,7 +54,24 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 5,
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
+    )
+}
+
 ROOT_URLCONF = 'ejobs.urls'
+
+import cloudinary
+cloudinary.config(
+    cloud_name='dsbebvfff',
+    api_key='825956681133294',
+    api_secret='mlg4G6x3cLisjUC_sKx4GiGpYQk',
+)
+
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
 TEMPLATES = [
     {

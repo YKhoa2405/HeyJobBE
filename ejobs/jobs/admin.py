@@ -1,12 +1,36 @@
 from django.contrib import admin
 from django import forms
-from .models import Job, User, Applications, Seeker, Employer, SaveJob
+from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, SeekerCompanyFollow
 
 
-admin.site.register(Seeker)
-admin.site.register(User)
-admin.site.register(Employer)
-admin.site.register(SaveJob)
-admin.site.register(Job)
-admin.site.register(Applications)
+class UserAdmin(admin.ModelAdmin):
+    list_display = ['id', 'username', 'role', 'is_active']
 
+
+class SeekerAdmin(admin.ModelAdmin):
+    list_display = ['id']
+
+
+class EmployerAdmin(admin.ModelAdmin):
+    list_display = ['id', 'company_name', 'user']
+
+
+class ApplyJobAdmin(admin.ModelAdmin):
+    list_display = ['id', 'seeker', 'job', 'status']
+
+
+class JobAdmin(admin.ModelAdmin):
+    list_display = ['id', 'title', 'employer']
+
+
+class SaveJobAdmin(admin.ModelAdmin):
+    list_display = ['seeker', 'job', 'created_date']
+
+
+admin.site.register(Seeker, SeekerAdmin)
+admin.site.register(User, UserAdmin)
+admin.site.register(Employer, EmployerAdmin)
+# admin.site.register(SaveJob, SaveJobAdmin)
+admin.site.register(Job, JobAdmin)
+admin.site.register(JobApplication, ApplyJobAdmin)
+# admin.site.register(SeekerCompanyFollow)
