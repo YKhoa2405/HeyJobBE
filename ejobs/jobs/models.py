@@ -101,7 +101,6 @@ class CVStatus(Enum):
 class JobApplication(BaseModel):
     created_at = BaseModel.created_date
     cover_letter = models.TextField()
-    cv = models
     status = EnumChoiceField(CVStatus, default=CVStatus.PENDING)
     job = models.ForeignKey(Job, on_delete=models.CASCADE)
     seeker = models.ForeignKey(User, on_delete=models.CASCADE)

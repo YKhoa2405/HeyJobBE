@@ -56,6 +56,15 @@ class SaveJobSerializer(ModelSerializer):
         fields = ["seeker", "job", "created_date"]
 
 
+class JobApplicationCreateSerializer(serializers.ModelSerializer):
+    job = serializers.PrimaryKeyRelatedField(queryset=Job.objects.all())
+    seeker = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())  # Đọc-only vì nó được gán tự động
+
+    class Meta:
+        model = JobApplication
+        fields = ['job', 'seeker', 'cover_letter', 'status']
+
+
 class JobApplicationSerializer(ModelSerializer):
     job = JobSerializer()
     seeker = UserSerializer()
@@ -64,4 +73,25 @@ class JobApplicationSerializer(ModelSerializer):
         model = JobApplication
         fields = ["job", "seeker", "cover_letter", "status", "created_at"]
 
-        read_only_fields = ['created_at', 'status']
+
+class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
+    job_title = serializers.SerializerMethodField()
+    seeker_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = JobApplication
+        fields = ['job_title', 'seeker_info', 'status', 'created_at']
+
+    def get_job_title(self, obj):
+        return obj.job.title
+
+    def get_seeker_info(self, obj):
+        seeker = obj.seeker
+        return {
+            'id': seeker.id,
+            'email': seeker.email,  # Hoặc bất kỳ thông tin nào bạn muốn hiển thị
+            'username': seeker.username
+        }
+
+
+

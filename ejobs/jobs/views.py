@@ -1,12 +1,13 @@
 from django.http import HttpResponse
 from django.views import View
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from rest_framework.parsers import MultiPartParser
 from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole
-from .serializer import JobSerializer, UserSerializer, EmployerSerializer, SeekerSerializer, SaveJobSerializer, JobApplicationSerializer
+from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus
+from .serializer import JobSerializer, UserSerializer, EmployerSerializer, SeekerSerializer, SaveJobSerializer, \
+    JobApplicationSerializer, JobApplicationCreateSerializer, FilterCVJobApplicationSerializer
 
 
 class IsEmployer(permissions.BasePermission):
@@ -70,56 +71,115 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
 
 
 class JobViewSet(viewsets.ModelViewSet):
-    queryset = Job.objects.all(is_active=True)
+    queryset = Job.objects.filter(is_active=True)
     serializer_class = JobSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployer]
 
     def perform_create(self, serializer):  # khi gọi api create sẽ lấy user đang đăng nhập gán vào
         serializer.save(employer=self.request.user)
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            # Chỉ employer mới có thể tạo, cập nhật, hoặc xóa công việc
             return [permissions.IsAuthenticated(), IsEmployer()]
+        # Cả employer và seeker đều có thể xem danh sách công việc
         return [permissions.IsAuthenticated()]
 
+    @action(detail=False, methods=['get'], url_path='employer_jobs')
+    def list_employer_jobs(self, request):
+        # Hiển thị danh sách công việc của nhà tuyển dụng hiện tại
+        jobs = Job.objects.filter(employer=request.user)
+        serializer = self.get_serializer(jobs, many=True)
+        return Response(serializer.data)
 
-class JobApplicationViewSet(viewsets.GenericViewSet):
+    @action(detail=True, methods=['get'], url_path='employer_job_seeker')
+    def get_employer_jobs(self, request, pk=None):
+        # Lấy các công việc mà employer đã đăng
+        jobs = Job.objects.filter(employer_id=pk, is_active=True)
+        serializer = self.get_serializer(jobs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='apply', permission_classes=[IsSeeker])
+    def apply(self, request, pk=None):
+        job = self.get_object()
+
+        # Tạo một JobApplication mới
+        data = {
+            'job': job,
+            'seeker': request.user,
+            'cover_letter': request.data.get('cover_letter')
+        }
+        serializer = JobApplicationSerializer(data=data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, generics.RetrieveAPIView):
     queryset = JobApplication.objects.all()
-    serializer_class = JobApplicationSerializer
+
+    def get_serializer_class(self):
+        if self.action == ['apply_job']:
+            return JobApplicationCreateSerializer
+        # if self.action == ['seeker_job']:
+        #     return FilterJobApplicationSerializer
+        if self.action == ['employer_apply']:
+            return FilterCVJobApplicationSerializer
+        return JobApplicationSerializer
+
+    def perform_create(self, serializer):
+        # Tự động gán seeker là người dùng hiện tại
+        serializer.save(seeker=self.request.user)
 
     def get_permissions(self):
-        if self.action in ['apply']:
-            return [permissions.IsAuthenticated()]
+        if self.action == ['apply_job', 'seeker_apply']:
+            return [permissions.IsAuthenticated(), IsSeeker()]
+        if self.action in ['employer_apply']:
+            return [permissions.IsAuthenticated(), IsEmployer()]  # Hoặc quyền phù hợp cho nhà tuyển dụng
         return [permissions.AllowAny()]
 
-    @action(detail=True, methods=['post'], url_path='apply_job')
-    def apply_for_job(self, request, pk=None):
-        try:
-            user = request.user
+    @action(methods=['post'], url_path='apply_job', detail=True)
+    def apply_job(self, request, pk=None):
+        job = get_object_or_404(Job, id=pk)
 
-            # Kiểm tra xem người dùng có phải là Seeker không
-            if not hasattr(user, 'seeker'):
-                return Response({"detail": "Only job seekers can apply for jobs."}, status=status.HTTP_403_FORBIDDEN)
+        if JobApplication.objects.filter(job=job, seeker=request.user).exists():
+            return Response({'detail': 'You have already applied for this job.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            job = self.get_object()  # Lấy đối tượng Job từ pk
-            seeker = user.seeker  # Lấy đối tượng Seeker từ người dùng hiện tại
-            data = request.data
-            data['job'] = job.id
-            data['seeker'] = seeker.id
+        # Tạo dữ liệu để nộp đơn
+        data = {
+            'cover_letter': request.data.get('cover_letter'),
+            'job': job.id,
+            'seeker': request.user.id
+        }
 
-            # Kiểm tra xem ứng viên đã ứng tuyển vào công việc này chưa
-            if JobApplication.objects.filter(job=job, seeker=seeker).exists():
-                return Response({"detail": "You have already applied for this job."},
-                                status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(data=data)
 
-            serializer = JobApplicationSerializer(data=data)
-            if serializer.is_valid():
-                serializer.save()
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        except Job.DoesNotExist:
-            return Response({"detail": "Job not found."}, status=status.HTTP_404_NOT_FOUND)
+    @action(detail=False, methods=['get'], url_path='seeker_apply') #Danh sách công việc đã ứng tuyển / Seeker
+    def seeker_apply(self, request):
+        seeker = request.user
+        applications = JobApplication.objects.filter(seeker=seeker)
+        serializer = JobApplicationSerializer(applications, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='employer_apply') #Danh sách cv đã ứng tuyển / Employer
+    def employer_apply(self, request):
+
+        employer = request.user.id
+
+        # Lấy các công việc của nhà tuyển dụng
+        jobs = Job.objects.filter(employer=employer)
+
+        # Lấy các đơn ứng tuyển cho các công việc này
+        applications = JobApplication.objects.filter(job__in=jobs)
+        serializer = FilterCVJobApplicationSerializer(applications, many=True)
+        return Response(serializer.data)
+
 
 
 
