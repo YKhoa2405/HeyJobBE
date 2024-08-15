@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, SeekerCompanyFollow
+from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, SeekerCompanyFollow, Technology
 
 
 class UserAdmin(admin.ModelAdmin):
@@ -8,7 +8,7 @@ class UserAdmin(admin.ModelAdmin):
 
 
 class SeekerAdmin(admin.ModelAdmin):
-    list_display = ['id']
+    list_display = ['id', 'user']
 
 
 class EmployerAdmin(admin.ModelAdmin):
@@ -30,7 +30,7 @@ class SaveJobAdmin(admin.ModelAdmin):
 admin.site.register(Seeker, SeekerAdmin)
 admin.site.register(User, UserAdmin)
 admin.site.register(Employer, EmployerAdmin)
-# admin.site.register(SaveJob, SaveJobAdmin)
+admin.site.register(SaveJob, SaveJobAdmin)
 admin.site.register(Job, JobAdmin)
 admin.site.register(JobApplication, ApplyJobAdmin)
-# admin.site.register(SeekerCompanyFollow)
+admin.site.register(Technology)

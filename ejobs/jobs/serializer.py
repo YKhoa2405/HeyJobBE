@@ -1,6 +1,12 @@
 from rest_framework import serializers
 from rest_framework.serializers import ModelSerializer
-from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplication
+from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplication, Technology
+
+
+class TechnologySerializer(ModelSerializer):
+    class Meta:
+        model = Technology
+        fields = ['name']
 
 
 class EmployerSerializer(ModelSerializer):
@@ -10,9 +16,13 @@ class EmployerSerializer(ModelSerializer):
 
 
 class SeekerSerializer(ModelSerializer):
+    technologies = TechnologySerializer(many=True)
+
     class Meta:
         model = Seeker
-        fields = ['user', 'experience', 'location', 'technology']
+        fields = ['user', 'experience', 'location', 'technologies']
+
+
 
 class UserSerializer(ModelSerializer):
     employer = EmployerSerializer(read_only=True)
@@ -39,21 +49,21 @@ class UserSerializer(ModelSerializer):
 
 class JobSerializer(ModelSerializer):
     employer = UserSerializer(read_only=True)
+    technologies = TechnologySerializer(many=True)
 
     class Meta:
         model = Job
-        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technology', 'created_at', 'expiration_date']
+        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technologies', 'created_at', 'expiration_date']
 
         read_only_fields = ['created_at', 'id']
 
 
 class SaveJobSerializer(ModelSerializer):
     job = JobSerializer()
-    seeker = UserSerializer()
 
     class Meta:
         model = SaveJob
-        fields = ["seeker", "job", "created_date"]
+        fields = ["job", "created_date"]
 
 
 class JobApplicationCreateSerializer(serializers.ModelSerializer):

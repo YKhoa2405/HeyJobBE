@@ -1,13 +1,15 @@
+from django.db.models import Q
 from django.http import HttpResponse
 from django.views import View
 from django.shortcuts import render, get_object_or_404
 from rest_framework.parsers import MultiPartParser
 from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus
+from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus, Technology
 from .serializer import JobSerializer, UserSerializer, EmployerSerializer, SeekerSerializer, SaveJobSerializer, \
-    JobApplicationSerializer, JobApplicationCreateSerializer, FilterCVJobApplicationSerializer
+    JobApplicationSerializer, JobApplicationCreateSerializer, FilterCVJobApplicationSerializer, TechnologySerializer
 
 
 class IsEmployer(permissions.BasePermission):
@@ -22,13 +24,18 @@ class IsSeeker(permissions.BasePermission):
         return request.user.is_authenticated and request.user.role == UserRole.JOB_SEEKER
 
 
+class TechnologyViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Technology.objects.all()
+    serializer_class = TechnologySerializer
+
+
 class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.RetrieveAPIView):
     queryset = User.objects.filter(is_active=True)
     serializer_class = UserSerializer
     parser_classes = [MultiPartParser, ]
 
     def get_permissions(self):
-        if self.action in ['retrieve', 'current_user', 'employer_detail']:
+        if self.action in ['retrieve', 'current_user', 'employer_detail', 'retrieve']:
             return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
@@ -68,6 +75,31 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
             return Response({"detail": "User not found."}, status=404)
         except Employer.DoesNotExist:
             return Response({"detail": "Employer data not found."}, status=404)
+
+    @action(detail=False, methods=['patch'], url_path='update_employer')
+    def update_employer(self, request):
+        user = request.user
+
+        employer = Employer.objects.get(user=user)
+        serializer = EmployerSerializer(employer, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
+
+    @action(detail=False, methods=['patch'], url_path='update_seeker')
+    def update_seeker(self, request):
+        user = request.user
+        # Lấy thông tin của người tìm việc liên kết với người dùng hiện tại
+        seeker = Seeker.objects.get(user=user)
+        serializer = SeekerSerializer(seeker, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            technology = request.data.get(Technology, [])
+            if technology:
+                seeker.technologies.set(technology)
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
 
 
 class JobViewSet(viewsets.ModelViewSet):
@@ -114,6 +146,35 @@ class JobViewSet(viewsets.ModelViewSet):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'], url_path='search')
+    def search(self, request):
+        # Lấy các tham số tìm kiếm từ truy vấn
+        technologies = request.query_params.getlist('technologies', [])
+        salary = request.query_params.get('salary', None)
+        location = request.query_params.get('location', None)
+        experience = request.query_params.get('experience', None)
+
+        # Tạo một đối tượng Q để xây dựng các điều kiện tìm kiếm
+        query = Q(is_active=True)
+
+        if technologies:
+            # Tìm công việc với công nghệ phù hợp
+            query &= Q(technologies__id__in=technologies)
+        if salary:
+            # Tìm công việc với mức lương
+            query &= Q(salary__icontains=salary)
+        if location:
+            # Tìm công việc ở địa điểm cụ thể
+            query &= Q(location__icontains=location)
+        if experience:
+            # Tìm công việc yêu cầu kinh nghiệm cụ thể
+            query &= Q(experience__icontains=experience)
+
+        # Áp dụng các điều kiện tìm kiếm cho queryset
+        jobs = Job.objects.filter(query).distinct()
+        serializer = self.get_serializer(jobs, many=True)
+        return Response(serializer.data)
 
 
 class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, generics.RetrieveAPIView):
@@ -181,9 +242,41 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         return Response(serializer.data)
 
 
+class SaveJobViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
 
+    def list(self, request):
+        user = request.user
+        queryset = SaveJob.objects.filter(seeker=user)
+        serializer = SaveJobSerializer(queryset, many=True)
+        return Response(serializer.data)
 
+    def create(self, request):
+        job_id = request.data.get('job_id')
+        if not job_id:
+            return Response({"detail": "Job ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        user = request.user
+        job = Job.objects.get(id=job_id)
+
+        # Check if the job is already in the list
+        if SaveJob.objects.filter(seeker=user, job=job).exists():
+            return Response({"detail": "Job is already in the list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        save_job = SaveJob(seeker=user, job=job)
+        save_job.save()
+
+        serializer = SaveJobSerializer(save_job)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, pk=None):
+        user = request.user
+        try:
+            save_job = SaveJob.objects.get(seeker=user, job_id=pk)
+            save_job.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except SaveJob.DoesNotExist:
+            return Response({"detail": "Job not found in the list"}, status=status.HTTP_404_NOT_FOUND)
 
 
 

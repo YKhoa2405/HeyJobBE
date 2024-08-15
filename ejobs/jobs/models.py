@@ -13,13 +13,20 @@ class BaseModel(models.Model):
         abstract = True
 
 
+class Technology(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+
+    def __str__(self):
+        return self.name
+
+
 class UserRole(Enum):
     EMPLOYER = 'Nha tuyen dung'
     JOB_SEEKER = 'Ung vien'
 
 
 class User(AbstractUser):
-    avatar = CloudinaryField('avatar', null=True, blank=True)
+    avatar = CloudinaryField('avatar', blank=True)
     email = models.EmailField(max_length=50, unique=True)
     is_active = models.BooleanField(default=True)
     role = EnumChoiceField(UserRole, default=None, null=True, blank=True)
@@ -28,7 +35,7 @@ class User(AbstractUser):
 class Employer(BaseModel):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     company_name = models.CharField(max_length=255, null=True, blank=True)
-    website = models.URLField(max_length=255, unique=True)
+    website = models.URLField(max_length=255, unique=True, null=True, blank=True)
     size = models.PositiveIntegerField(null=True, blank=True)
     address = models.CharField(max_length=255, null=True, blank=True)
     description = models.TextField(null=True, blank=True)
@@ -42,7 +49,7 @@ class Seeker(BaseModel):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     experience = models.TextField(null=True, blank=True)
     location = models.CharField(max_length=255, null=True, blank=True)
-    technology = models.CharField(max_length=255, null=True, blank=True)
+    technologies = models.ManyToManyField(Technology, null=True, blank=True)
 
     def __str__(self):
         return f"Seeker: {self.user.email}"
@@ -60,9 +67,6 @@ class EmployerDocument(BaseModel):
 
     def __str__(self):
         return f"Documents: {self.employer}"
-
-
-
 
 
 class SeekerCompanyFollow(models.Model):
@@ -83,7 +87,7 @@ class Job(BaseModel):
     salary = models.CharField(max_length=255)
     expiration_date = models.DateTimeField()
     experience = models.CharField(max_length=20)
-    technology = models.CharField(max_length=255)
+    technologies = models.ManyToManyField(Technology)
     created_at = BaseModel.created_date
     is_active = models.BooleanField(default=True)
 
@@ -104,6 +108,7 @@ class JobApplication(BaseModel):
     status = EnumChoiceField(CVStatus, default=CVStatus.PENDING)
     job = models.ForeignKey(Job, on_delete=models.CASCADE)
     seeker = models.ForeignKey(User, on_delete=models.CASCADE)
+    cv = CloudinaryField('cv')
 
 
 class SaveJob(models.Model):
