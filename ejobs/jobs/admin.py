@@ -27,6 +27,10 @@ class SaveJobAdmin(admin.ModelAdmin):
     list_display = ['seeker', 'job', 'created_date']
 
 
+class TechnologyAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name']
+
+
 admin.site.register(Seeker, SeekerAdmin)
 admin.site.register(User, UserAdmin)
 admin.site.register(Employer, EmployerAdmin)

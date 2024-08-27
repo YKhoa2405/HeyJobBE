@@ -6,22 +6,31 @@ from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplicati
 class TechnologySerializer(ModelSerializer):
     class Meta:
         model = Technology
-        fields = ['name']
+        fields = ['id', 'name']
 
 
 class EmployerSerializer(ModelSerializer):
     class Meta:
         model = Employer
-        fields = ['user', 'company_name', 'website', 'size', 'address', 'description']
+        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status']
 
 
-class SeekerSerializer(ModelSerializer):
+class SeekerSerializer(serializers.ModelSerializer):
     technologies = TechnologySerializer(many=True)
+    saved_count = serializers.SerializerMethodField()  # Thêm trường để đếm số lượng việc làm đã lưu
+    apply_count = serializers.SerializerMethodField()  # Thêm trường để đếm số lượng việc làm đã lưu
 
     class Meta:
         model = Seeker
-        fields = ['user', 'experience', 'location', 'technologies']
+        fields = ['user', 'experience', 'location', 'technologies', 'saved_count', 'apply_count']
 
+    def get_saved_count(self, obj):
+        # Đếm số lượng việc làm đã lưu cho seeker hiện tại
+        return SaveJob.objects.filter(seeker=obj.user).count()
+
+    def get_apply_count(self, obj):
+        # Đếm số lượng việc làm đã lưu cho seeker hiện tại
+        return JobApplication.objects.filter(seeker=obj.user).count()
 
 
 class UserSerializer(ModelSerializer):
@@ -30,7 +39,8 @@ class UserSerializer(ModelSerializer):
     role = serializers.ChoiceField(choices=[(role.value, role.name) for role in UserRole])
     class Meta:
         model = User
-        fields = ["id", "username", "email", "password", "avatar", "role", "employer", "seeker"]
+        fields = ["id", "username", "email", "password", "avatar", "role",  "employer", "seeker"]
+
 
     def create(self, validated_data):
         role_value = validated_data.pop('role')
@@ -47,15 +57,26 @@ class UserSerializer(ModelSerializer):
         return user
 
 
+class JobCreateSerializer(serializers.ModelSerializer):
+    # Chọn các công nghệ bằng cách sử dụng id
+    technologies = serializers.PrimaryKeyRelatedField(
+        queryset=Technology.objects.all(),
+        many=True
+    )
+    class Meta:
+        model = Job
+        fields = ['title', 'description', 'requirements', 'location', 'salary', 'expiration_date', 'experience', 'technologies', 'is_active']
+
 class JobSerializer(ModelSerializer):
     employer = UserSerializer(read_only=True)
     technologies = TechnologySerializer(many=True)
 
     class Meta:
         model = Job
-        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technologies', 'created_at', 'expiration_date']
+        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technologies', 'created_at', 'expiration_date', 'description', 'requirements', 'is_active']
 
         read_only_fields = ['created_at', 'id']
+
 
 
 class SaveJobSerializer(ModelSerializer):
@@ -67,13 +88,18 @@ class SaveJobSerializer(ModelSerializer):
 
 
 class JobApplicationCreateSerializer(serializers.ModelSerializer):
-    job = serializers.PrimaryKeyRelatedField(queryset=Job.objects.all())
-    seeker = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())  # Đọc-only vì nó được gán tự động
+    class Meta:
+        model = JobApplication
+        fields = ['cover_letter', 'cv']
+
+
+class JobApplicationDetailSerializer(serializers.ModelSerializer):
+    seeker = UserSerializer(read_only=True)
+    cv = serializers.FileField(read_only=True)
 
     class Meta:
         model = JobApplication
-        fields = ['job', 'seeker', 'cover_letter', 'status']
-
+        fields = ['seeker', 'cv']
 
 class JobApplicationSerializer(ModelSerializer):
     job = JobSerializer()
@@ -81,19 +107,23 @@ class JobApplicationSerializer(ModelSerializer):
 
     class Meta:
         model = JobApplication
-        fields = ["job", "seeker", "cover_letter", "status", "created_at"]
+        fields = ["job", "seeker", "cover_letter", "status", "created_at", "cv"]
 
 
 class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
-    job_title = serializers.SerializerMethodField()
+    job = serializers.SerializerMethodField()
     seeker_info = serializers.SerializerMethodField()
 
     class Meta:
         model = JobApplication
-        fields = ['job_title', 'seeker_info', 'status', 'created_at']
+        fields = ['id', 'job', 'seeker_info', 'status', 'created_at', "cover_letter", "cv", "status"]
 
-    def get_job_title(self, obj):
-        return obj.job.title
+    def get_job(self, obj):
+        job = obj.job
+        return {
+            'id': job.id,
+            'title': job.title,
+        }
 
     def get_seeker_info(self, obj):
         seeker = obj.seeker
