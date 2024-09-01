@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, SeekerCompanyFollow, Technology
+from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, Technology
 
 
 class UserAdmin(admin.ModelAdmin):

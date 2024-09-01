@@ -3,6 +3,8 @@ from django.contrib.auth.models import AbstractUser
 from enum import Enum
 from enumchoicefield import EnumChoiceField
 from cloudinary.models import CloudinaryField
+from s3direct.fields import S3DirectField
+
 
 class BaseModel(models.Model):
     created_date = models.DateTimeField(auto_now_add=True)
@@ -26,7 +28,7 @@ class UserRole(Enum):
 
 
 class User(AbstractUser):
-    avatar = CloudinaryField('avatar', blank=True)
+    avatar = CloudinaryField()
     email = models.EmailField(max_length=50, unique=True)
     is_active = models.BooleanField(default=True)
     role = EnumChoiceField(UserRole, default=None, null=True, blank=True)
@@ -49,33 +51,32 @@ class Seeker(BaseModel):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     experience = models.TextField(null=True, blank=True)
     location = models.CharField(max_length=255, null=True, blank=True)
-    technologies = models.ManyToManyField(Technology, null=True, blank=True)
+    technologies = models.ManyToManyField(Technology, blank=True)
 
     def __str__(self):
         return f"Seeker: {self.user.email}"
 
 
 class EmployerImage(BaseModel):
-    url = CloudinaryField(null=True, blank=True)
+    url = CloudinaryField()
     employer = models.ForeignKey(Employer, on_delete=models.CASCADE)
 
 
 class EmployerDocument(BaseModel):
     employer = models.OneToOneField(Employer, on_delete=models.CASCADE)
-    business_document = CloudinaryField(null=True, blank=True)
-    tax_document = CloudinaryField(null=True, blank=True)
+    business_document = models.FileField(upload_to='documents/', null=True, blank=True)
+    tax_document = models.FileField(upload_to='documents/', null=True, blank=True)
 
     def __str__(self):
         return f"Documents: {self.employer}"
 
 
-class SeekerCompanyFollow(models.Model):
-    seeker = models.ForeignKey(Seeker, on_delete=models.CASCADE)
-    employer = models.ForeignKey(Employer, on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
+class Follow(models.Model):
+    follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name='follow_user')
+    following = models.ForeignKey(User, on_delete=models.CASCADE, related_name='follow_following')
 
     class Meta:
-        unique_together = ('seeker', 'employer')  # Ensure a user can only follow a company once
+        unique_together = ('follower', 'following')
 
 
 class Job(BaseModel):
@@ -84,11 +85,13 @@ class Job(BaseModel):
     description = models.TextField()
     requirements = models.TextField()
     location = models.CharField(max_length=255)
+    location_detail = models.CharField(max_length=255)
     salary = models.CharField(max_length=255)
     expiration_date = models.DateTimeField()
     experience = models.CharField(max_length=20)
     technologies = models.ManyToManyField(Technology)
     created_at = BaseModel.created_date
+    quantity = models.IntegerField()
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -108,7 +111,12 @@ class JobApplication(BaseModel):
     status = EnumChoiceField(CVStatus, default=CVStatus.PENDING)
     job = models.ForeignKey(Job, on_delete=models.CASCADE)
     seeker = models.ForeignKey(User, on_delete=models.CASCADE)
-    cv = CloudinaryField('cv')
+    # cv = S3DirectField(dest='primary_destination', blank=True)
+    # cv = models.FileField(upload_to='files/')
+    cv = CloudinaryField()
+    email = models.EmailField()
+    phone = models.CharField(max_length=11)
+    name = models.CharField(max_length=255)
 
 
 class SaveJob(models.Model):

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework.serializers import ModelSerializer
-from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplication, Technology
+from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplication, Technology, CVStatus, Follow
 
 
 class TechnologySerializer(ModelSerializer):
@@ -10,10 +10,20 @@ class TechnologySerializer(ModelSerializer):
 
 
 class EmployerSerializer(ModelSerializer):
+    job_count = serializers.SerializerMethodField()
+    pending_cv_count = serializers.SerializerMethodField()
+    accepted_cv_count = serializers.SerializerMethodField()
     class Meta:
         model = Employer
-        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status']
+        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status', 'job_count', 'pending_cv_count', 'accepted_cv_count']
+    def get_job_count(self, obj):
+        return Job.objects.count()  # Assuming the related name for Job model is 'jobs'
 
+    def get_pending_cv_count(self, obj):
+        return JobApplication.objects.filter(job__employer=obj.user, status=CVStatus.PENDING).count()
+
+    def get_accepted_cv_count(self, obj):
+        return JobApplication.objects.filter(job__employer=obj.user, status=CVStatus.OPEN).count()
 
 class SeekerSerializer(serializers.ModelSerializer):
     technologies = TechnologySerializer(many=True)
@@ -67,16 +77,30 @@ class JobCreateSerializer(serializers.ModelSerializer):
         model = Job
         fields = ['title', 'description', 'requirements', 'location', 'salary', 'expiration_date', 'experience', 'technologies', 'is_active']
 
-class JobSerializer(ModelSerializer):
+class JobSerializer(serializers.ModelSerializer):
     employer = UserSerializer(read_only=True)
     technologies = TechnologySerializer(many=True)
+    is_saved = serializers.SerializerMethodField()
+    is_applied = serializers.SerializerMethodField()
 
     class Meta:
         model = Job
-        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technologies', 'created_at', 'expiration_date', 'description', 'requirements', 'is_active']
-
+        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technologies', 'created_at', 'expiration_date', 'description', 'requirements', 'is_saved', 'is_applied']
         read_only_fields = ['created_at', 'id']
 
+    def get_is_saved(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            user = request.user
+            return SaveJob.objects.filter(seeker=user, job=obj).exists()
+        return False
+
+    def get_is_applied(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            user = request.user
+            return JobApplication.objects.filter(seeker=user, job=obj).exists()
+        return False
 
 
 class SaveJobSerializer(ModelSerializer):
@@ -90,7 +114,7 @@ class SaveJobSerializer(ModelSerializer):
 class JobApplicationCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobApplication
-        fields = ['cover_letter', 'cv']
+        fields = ['cover_letter', 'cv', "name", "phone", "email"]
 
 
 class JobApplicationDetailSerializer(serializers.ModelSerializer):
@@ -107,7 +131,7 @@ class JobApplicationSerializer(ModelSerializer):
 
     class Meta:
         model = JobApplication
-        fields = ["job", "seeker", "cover_letter", "status", "created_at", "cv"]
+        fields = ["job", "seeker", "cover_letter", "status", "created_at", "cv", "name", "phone", "email"]
 
 
 class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
@@ -116,7 +140,7 @@ class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = JobApplication
-        fields = ['id', 'job', 'seeker_info', 'status', 'created_at', "cover_letter", "cv", "status"]
+        fields = ['id', 'job', 'seeker_info', 'status', 'created_at', "cover_letter", "cv", "status", "name", "phone", "email"]
 
     def get_job(self, obj):
         job = obj.job
@@ -132,6 +156,12 @@ class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
             'email': seeker.email,  # Hoặc bất kỳ thông tin nào bạn muốn hiển thị
             'username': seeker.username
         }
+
+
+class FollowSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Follow
+        fields = ['follower', 'following']
 
 
 

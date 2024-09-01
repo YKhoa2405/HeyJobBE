@@ -8,10 +8,11 @@ from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus, Technology
+from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus, Technology, Follow
 from .serializer import JobSerializer, UserSerializer, EmployerSerializer, SeekerSerializer, SaveJobSerializer, \
     JobApplicationSerializer, JobApplicationCreateSerializer, FilterCVJobApplicationSerializer, TechnologySerializer, \
-    JobApplicationDetailSerializer, JobCreateSerializer
+    JobApplicationDetailSerializer, JobCreateSerializer, FollowSerializer
+from django.conf import settings
 
 
 class IsEmployer(permissions.BasePermission):
@@ -37,7 +38,7 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
     parser_classes = [MultiPartParser, ]
 
     def get_permissions(self):
-        if self.action in ['retrieve', 'current_user', 'employer_detail', 'retrieve']:
+        if self.action in ['retrieve', 'current_user', 'employer_detail', 'retrieve', 'follow', 'following', 'unfollow', 'follower']:
             return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
@@ -103,6 +104,58 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
 
+    @action(detail=True, methods=['post'], url_path='follow')
+    def follow(self, request, pk=None):
+        follower = request.user
+        following_user = User.objects.get(pk=pk)
+        try:
+            follow_relation, created = Follow.objects.get_or_create(follower=follower, following=following_user)
+            if created:
+                return Response({"detail": "You are now following this employer."}, status=status.HTTP_201_CREATED)
+            return Response({"detail": "You are already following this employer."}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({"detail": "Employer not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], url_path='unfollow')
+    def unfollow(self, request, pk=None):
+        user = request.user
+        unfollow_user = User.objects.get(pk=pk)
+        follow_relation = Follow.objects.filter(follower=user, following=unfollow_user).first()
+        if follow_relation:
+            follow_relation.delete()
+            return Response({"detail": "You have unfollowed this employer."}, status=status.HTTP_200_OK)
+        else:
+            return Response({"detail": "You were not following this employer."}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'], url_path='following')
+    def following(self, request):
+        user = request.user
+        following_relations = Follow.objects.filter(follower=user)
+
+        # Lấy danh sách các User mà user hiện tại đang theo dõi
+        following_users = [relation.following for relation in following_relations]
+
+        # Serialize dữ liệu của những người dùng đang theo dõi
+        users_data = UserSerializer(following_users, many=True).data
+
+        return Response(users_data)
+
+    @action(detail=True, methods=['get'], url_path='follower')
+    def follower_list(self, request, pk=None):
+        try:
+            user = User.objects.get(pk=pk)
+            # Lấy tất cả các Follow mà user hiện tại là người theo dõi (follower)
+            followers = Follow.objects.filter(following=user)
+
+            # Lấy danh sách các User mà người dùng đang theo dõi (follower_users)
+            follower_users = [relation.follower for relation in followers]
+
+            # Serialize dữ liệu của những người theo dõi
+            users_data = UserSerializer(follower_users, many=True).data
+
+            return Response(users_data)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
 class JobViewSet(viewsets.ModelViewSet):
     queryset = Job.objects.filter(is_active=True)
@@ -210,7 +263,9 @@ class JobViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
 
-class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, generics.RetrieveAPIView, generics.DestroyAPIView):
+
+class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, generics.RetrieveAPIView,
+                            generics.DestroyAPIView):
     queryset = JobApplication.objects.all()
 
     def get_serializer_class(self):
@@ -236,13 +291,14 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         job = Job.objects.get(pk=pk)
         seeker = request.user  # Lấy đối tượng seeker từ người dùng hiện tại
 
-
         # Lấy dữ liệu từ yêu cầu
         cover_letter = request.data.get('cover_letter')
-        cv = request.FILES.get('cv')
+        cv = request.data.get('cv')
 
         if not cover_letter or not cv:
             return Response({"detail": "Cover letter and CV are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        print("CV:", cv)
 
         # Tạo đơn ứng tuyển mới
         job_application = JobApplication.objects.create(
@@ -255,14 +311,14 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         serializer = JobApplicationCreateSerializer(job_application)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=['get'], url_path='seeker_apply') #Danh sách công việc đã ứng tuyển / Seeker
+    @action(detail=False, methods=['get'], url_path='seeker_apply')  # Danh sách công việc đã ứng tuyển / Seeker
     def seeker_apply(self, request):
         seeker = request.user
         applications = JobApplication.objects.filter(seeker=seeker)
         serializer = JobApplicationSerializer(applications, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], url_path='employer_apply') #Danh sách cv đã ứng tuyển / Employer
+    @action(detail=False, methods=['get'], url_path='employer_apply')  # Danh sách cv đã ứng tuyển / Employer
     def employer_apply(self, request):
 
         employer = request.user.id
@@ -275,7 +331,7 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         serializer = FilterCVJobApplicationSerializer(applications, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], url_path='employer_apply_new') #Danh sách cv đã ứng tuyển / Employer
+    @action(detail=False, methods=['get'], url_path='employer_apply_new')  # Danh sách cv đã ứng tuyển / Employer
     def employer_apply_new(self, request):
 
         employer = request.user.id
@@ -287,7 +343,6 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         applications = JobApplication.objects.filter(job__in=jobs, status__in=[CVStatus.PENDING, CVStatus.CLOSED])
         serializer = FilterCVJobApplicationSerializer(applications, many=True)
         return Response(serializer.data)
-
 
     @action(detail=True, methods=['get'], url_path='apply_detail')
     def apply_detail(self, request, pk=None):
@@ -338,4 +393,39 @@ class SaveJobViewSet(viewsets.ViewSet):
             return Response({"detail": "Job not found in the list"}, status=status.HTTP_404_NOT_FOUND)
 
 
+class FollowViewSet(viewsets.ModelViewSet):
+    queryset = Follow.objects.all()
+    serializer_class = FollowSerializer
 
+    def get_queryset(self):
+        # Chỉ lấy các bản ghi Follow mà follower là người dùng hiện tại
+        return Follow.objects.filter(follower=self.request.user)
+
+    @action(detail=False, methods=['post'], url_path='follow')
+    def follow_user(self, request):
+        follower = request.user
+
+        following_id = request.data.get('following_id')
+        following = User.objects.get(id=following_id)
+
+        if follower == following:
+            return Response({'error': 'You cannot follow yourself'}, status=status.HTTP_400_BAD_REQUEST)
+
+        follow, created = Follow.objects.get_or_create(follower=follower, following=following)
+        if created:
+            return Response({'status': 'followed'}, status=status.HTTP_201_CREATED)
+        else:
+            return Response({'status': 'already followed'}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='unfollow')
+    def unfollow_user(self, request):
+        follower = request.user
+        following_id = request.data.get('following_id')
+        following = User.objects.get(id=following_id)
+
+        follow = Follow.objects.filter(follower=follower, following=following).first()
+        if follow:
+            follow.delete()
+            return Response({'status': 'unfollowed'}, status=status.HTTP_200_OK)
+        else:
+            return Response({'status': 'not following'}, status=status.HTTP_400_BAD_REQUEST)

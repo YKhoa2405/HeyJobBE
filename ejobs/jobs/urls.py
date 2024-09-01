@@ -11,6 +11,7 @@ router.register(r'technology', views.TechnologyViewSet, basename='technology')
 router.register(r'save_job', views.SaveJobViewSet, basename='save_job')
 
 
+
 urlpatterns = [
     path('', include(router.urls)),
 ]
