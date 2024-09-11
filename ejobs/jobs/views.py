@@ -1,19 +1,21 @@
+import hashlib
+from datetime import timezone, timedelta, datetime
 from django.db.models import Q
-from django.http import HttpResponse
+from vnpay.models import Billing
 from django.utils.timezone import now
-from django.views import View
-from django.shortcuts import render, get_object_or_404
+from django.utils import timezone
+from geopy.distance import geodesic
 from rest_framework.parsers import MultiPartParser
 from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus, Technology, Follow
+from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus, Technology, Follow, \
+    Service, EmployerService
 from .serializer import JobSerializer, UserSerializer, EmployerSerializer, SeekerSerializer, SaveJobSerializer, \
     JobApplicationSerializer, JobApplicationCreateSerializer, FilterCVJobApplicationSerializer, TechnologySerializer, \
-    JobApplicationDetailSerializer, JobCreateSerializer, FollowSerializer
+    JobCreateSerializer, FollowSerializer, ServiceSerializer, PurchaseServiceSerializer
 from django.conf import settings
-
 
 class IsEmployer(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -107,12 +109,22 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
     @action(detail=True, methods=['post'], url_path='follow')
     def follow(self, request, pk=None):
         follower = request.user
-        following_user = User.objects.get(pk=pk)
+
+        # Kiểm tra nếu người dùng có vai trò là seeker
+        if follower.role != UserRole.JOB_SEEKER:
+            return Response({"detail": "Only job seekers can follow an employer."}, status=status.HTTP_403_FORBIDDEN)
+
         try:
-            follow_relation, created = Follow.objects.get_or_create(follower=follower, following=following_user)
-            if created:
-                return Response({"detail": "You are now following this employer."}, status=status.HTTP_201_CREATED)
-            return Response({"detail": "You are already following this employer."}, status=status.HTTP_200_OK)
+            following_user = User.objects.get(pk=pk)
+
+            # Kiểm tra xem người dùng đã theo dõi nhà tuyển dụng này chưa
+            if Follow.objects.filter(follower=follower, following=following_user).exists():
+                return Response({"detail": "You are already following this employer."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Nếu chưa theo dõi, tạo mối quan hệ theo dõi mới
+            Follow.objects.create(follower=follower, following=following_user)
+            return Response({"detail": "You are now following this employer."}, status=status.HTTP_201_CREATED)
+
         except User.DoesNotExist:
             return Response({"detail": "Employer not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -140,22 +152,6 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
 
         return Response(users_data)
 
-    @action(detail=True, methods=['get'], url_path='follower')
-    def follower_list(self, request, pk=None):
-        try:
-            user = User.objects.get(pk=pk)
-            # Lấy tất cả các Follow mà user hiện tại là người theo dõi (follower)
-            followers = Follow.objects.filter(following=user)
-
-            # Lấy danh sách các User mà người dùng đang theo dõi (follower_users)
-            follower_users = [relation.follower for relation in followers]
-
-            # Serialize dữ liệu của những người theo dõi
-            users_data = UserSerializer(follower_users, many=True).data
-
-            return Response(users_data)
-        except User.DoesNotExist:
-            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
 class JobViewSet(viewsets.ModelViewSet):
     queryset = Job.objects.filter(is_active=True)
@@ -178,7 +174,7 @@ class JobViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='employer_jobs')
     def list_employer_jobs(self, request):
         # Hiển thị danh sách công việc của nhà tuyển dụng hiện tại
-        jobs = Job.objects.filter(employer=request.user)
+        jobs = Job.objects.filter(employer=request.user).order_by('-is_active')
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
 
@@ -263,6 +259,41 @@ class JobViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], url_path='nearby')
+    def nearby_jobs(self, request):
+        # Lấy tọa độ và bán kính từ query parameters
+        user_lat = request.query_params.get('latitude')
+        user_lon = request.query_params.get('longitude')
+        max_distance = request.query_params.get('distance', 5)
+
+        # Kiểm tra xem tham số có hợp lệ không
+        if not user_lat or not user_lon:
+            return Response({"error": "Vui lòng cung cấp tọa độ latitude và longitude"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user_lat = float(user_lat)
+            user_lon = float(user_lon)
+            max_distance = float(max_distance)
+        except ValueError:
+            return Response({"error": "Tọa độ hoặc bán kính không hợp lệ"}, status=status.HTTP_400_BAD_REQUEST)
+
+        jobs = Job.objects.filter(is_active=True)  # Lọc công việc đang hoạt động
+        nearby_jobs = []
+
+        for job in jobs:
+            if job.latitude is not None and job.longitude is not None:
+                job_location = (job.latitude, job.longitude)
+                user_location = (user_lat, user_lon)
+                distance = geodesic(user_location, job_location).kilometers
+
+                if distance <= max_distance:
+                    nearby_jobs.append(job)
+
+        # Trả về danh sách công việc gần nhất
+        serializer = self.get_serializer(nearby_jobs, many=True)
+        return Response(serializer.data)
+
 
 class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, generics.RetrieveAPIView,
                             generics.DestroyAPIView):
@@ -294,6 +325,9 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         # Lấy dữ liệu từ yêu cầu
         cover_letter = request.data.get('cover_letter')
         cv = request.data.get('cv')
+        name = request.data.get('name')
+        email = request.data.get('email')
+        phone = request.data.get('phone')
 
         if not cover_letter or not cv:
             return Response({"detail": "Cover letter and CV are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -305,7 +339,10 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
             job=job,
             seeker=seeker,
             cover_letter=cover_letter,
-            cv=cv
+            cv=cv,
+            name=name,
+            email=email,
+            phone=phone
         )
 
         serializer = JobApplicationCreateSerializer(job_application)
@@ -342,17 +379,6 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
         # Lấy các đơn ứng tuyển cho các công việc này
         applications = JobApplication.objects.filter(job__in=jobs, status__in=[CVStatus.PENDING, CVStatus.CLOSED])
         serializer = FilterCVJobApplicationSerializer(applications, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=['get'], url_path='apply_detail')
-    def apply_detail(self, request, pk=None):
-        try:
-            job_application = JobApplication.objects.get(pk=pk)
-        except JobApplication.DoesNotExist:
-            return Response({"detail": "Job application not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Serialize the data
-        serializer = JobApplicationDetailSerializer(job_application)
         return Response(serializer.data)
 
 
@@ -429,3 +455,48 @@ class FollowViewSet(viewsets.ModelViewSet):
             return Response({'status': 'unfollowed'}, status=status.HTTP_200_OK)
         else:
             return Response({'status': 'not following'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ServiceViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Service.objects.all()
+    serializer_class = ServiceSerializer
+
+    @action(detail=True, methods=['post'])
+    def purchase(self, request, pk):
+        service = Service.objects.get(pk=pk)
+        user = request.user  # Assuming the user has an associated Employer profile
+
+        try:
+            bill = Billing.objects.get(reference_number=request.data.get("vnp_TransactionNo"))
+        except Billing.DoesNotExist:
+            return Response({"message": "Hóa đơn không tồn tại"}, status=status.HTTP_400_BAD_REQUEST)
+        if bill:
+            bill.result_payment = request.data.get("vnp_TransactionStatus")
+            bill.is_paid = request.data.get("vnp_TransactionStatus") == "00"
+            bill.transaction_id = request.data.get("vnp_TransactionNo")
+            pay_at_str = request.data.get("vnp_PayDate")
+            bill.pay_at = datetime.strptime(pay_at_str, '%Y%m%d%H%M%S')
+            bill.save()
+
+            existing_service = EmployerService.objects.filter(user=user, service=service,
+                                                          is_active=True).first()
+            if existing_service:
+                # Update the end_date if the service is already active
+                existing_service.end_date = timezone.now() + timedelta(
+                    days=30 * service.duration)  # Adjust duration as needed
+                existing_service.save()
+                return Response({'status': 'Service updated'}, status=status.HTTP_200_OK)
+
+            # Create a new EmployerService record
+            end_date = timezone.now() + timedelta(days=30 * service.duration)  # Adjust duration as needed
+            EmployerService.objects.create(
+                user=user,
+                service=service,
+                end_date=end_date,
+                amount=service.price,
+            )
+            return Response({'status': 'Service purchased'}, status=status.HTTP_201_CREATED)
+
+
+
+

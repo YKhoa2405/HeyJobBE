@@ -9,9 +9,10 @@ router.register(r'users', views.UserViewSet, basename='user')
 router.register(r'apply', views.JobApplicationViewSet, basename='apply')
 router.register(r'technology', views.TechnologyViewSet, basename='technology')
 router.register(r'save_job', views.SaveJobViewSet, basename='save_job')
-
+router.register(r'services', views.ServiceViewSet, basename='service')
 
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('vnpay/', include('vnpay.api_urls')),
 ]

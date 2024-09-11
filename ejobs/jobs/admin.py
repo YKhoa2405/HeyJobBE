@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, Technology
+from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, Technology, Follow, Service, EmployerService
 
 
 class UserAdmin(admin.ModelAdmin):
@@ -38,3 +38,8 @@ admin.site.register(SaveJob, SaveJobAdmin)
 admin.site.register(Job, JobAdmin)
 admin.site.register(JobApplication, ApplyJobAdmin)
 admin.site.register(Technology)
+admin.site.register(Follow)
+admin.site.register(Service)
+admin.site.register(EmployerService)
+
+

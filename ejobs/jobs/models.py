@@ -1,9 +1,11 @@
+from datetime import timezone
+
+from dateutil.relativedelta import relativedelta
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from enum import Enum
 from enumchoicefield import EnumChoiceField
 from cloudinary.models import CloudinaryField
-from s3direct.fields import S3DirectField
 
 
 class BaseModel(models.Model):
@@ -41,6 +43,7 @@ class Employer(BaseModel):
     size = models.PositiveIntegerField(null=True, blank=True)
     address = models.CharField(max_length=255, null=True, blank=True)
     description = models.TextField(null=True, blank=True)
+    business_document = CloudinaryField(null=True, blank=True)
     approval_status = models.BooleanField(default=False)
 
     def __str__(self):
@@ -62,21 +65,14 @@ class EmployerImage(BaseModel):
     employer = models.ForeignKey(Employer, on_delete=models.CASCADE)
 
 
-class EmployerDocument(BaseModel):
-    employer = models.OneToOneField(Employer, on_delete=models.CASCADE)
-    business_document = models.FileField(upload_to='documents/', null=True, blank=True)
-    tax_document = models.FileField(upload_to='documents/', null=True, blank=True)
-
-    def __str__(self):
-        return f"Documents: {self.employer}"
-
-
 class Follow(models.Model):
     follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name='follow_user')
     following = models.ForeignKey(User, on_delete=models.CASCADE, related_name='follow_following')
 
     class Meta:
         unique_together = ('follower', 'following')
+
+
 
 
 class Job(BaseModel):
@@ -91,9 +87,10 @@ class Job(BaseModel):
     experience = models.CharField(max_length=20)
     technologies = models.ManyToManyField(Technology)
     created_at = BaseModel.created_date
-    quantity = models.IntegerField()
+    quantity = models.IntegerField(null=True, blank=True)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
     is_active = models.BooleanField(default=True)
-
     def __str__(self):
         return self.title
 
@@ -111,8 +108,6 @@ class JobApplication(BaseModel):
     status = EnumChoiceField(CVStatus, default=CVStatus.PENDING)
     job = models.ForeignKey(Job, on_delete=models.CASCADE)
     seeker = models.ForeignKey(User, on_delete=models.CASCADE)
-    # cv = S3DirectField(dest='primary_destination', blank=True)
-    # cv = models.FileField(upload_to='files/')
     cv = CloudinaryField()
     email = models.EmailField()
     phone = models.CharField(max_length=11)
@@ -127,4 +122,35 @@ class SaveJob(models.Model):
     class Meta:
         ordering = ['-created_date']
 
+
+class Service(models.Model):
+    name = models.CharField(max_length=100)  # Tên dịch vụ
+    description = models.TextField(null=True, blank=True)  # Mô tả dịch vụ
+    description_detail = models.TextField(null=True, blank=True)  # Mô tả dịch vụ
+    price = models.DecimalField(max_digits=10, decimal_places=2)  # Giá của dịch vụ
+    duration = models.IntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class EmployerService(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='services')
+    service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    start_date = models.DateTimeField(auto_now_add=True)
+    end_date = models.DateTimeField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def save(self, *args, **kwargs):
+        # Tính toán ngày hết hạn dịch vụ dựa trên duration
+        if not self.end_date:
+            self.end_date = self.start_date + relativedelta(months=self.service.duration)
+        super().save(*args, **kwargs)
+
+    @property
+    def is_service_active(self):
+        # Kiểm tra xem dịch vụ còn hoạt động không
+        return self.is_active and timezone.now() < self.end_date
 

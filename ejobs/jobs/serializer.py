@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from rest_framework.serializers import ModelSerializer
-from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplication, Technology, CVStatus, Follow
+from .models import Job, Employer, User, Seeker, UserRole, SaveJob, JobApplication, Technology, CVStatus, Follow, \
+    Service, EmployerService
 
 
 class TechnologySerializer(ModelSerializer):
@@ -13,9 +14,15 @@ class EmployerSerializer(ModelSerializer):
     job_count = serializers.SerializerMethodField()
     pending_cv_count = serializers.SerializerMethodField()
     accepted_cv_count = serializers.SerializerMethodField()
+    followers_count = serializers.SerializerMethodField()
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['business_document'] = instance.avatar.url
+        return rep
     class Meta:
         model = Employer
-        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status', 'job_count', 'pending_cv_count', 'accepted_cv_count']
+        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status', 'job_count', 'pending_cv_count', 'accepted_cv_count', 'followers_count', 'business_document']
     def get_job_count(self, obj):
         return Job.objects.count()  # Assuming the related name for Job model is 'jobs'
 
@@ -25,14 +32,18 @@ class EmployerSerializer(ModelSerializer):
     def get_accepted_cv_count(self, obj):
         return JobApplication.objects.filter(job__employer=obj.user, status=CVStatus.OPEN).count()
 
+    def get_followers_count(self, obj):
+        return Follow.objects.filter(following=obj.user).count()
+
+
 class SeekerSerializer(serializers.ModelSerializer):
     technologies = TechnologySerializer(many=True)
     saved_count = serializers.SerializerMethodField()  # Thêm trường để đếm số lượng việc làm đã lưu
     apply_count = serializers.SerializerMethodField()  # Thêm trường để đếm số lượng việc làm đã lưu
-
+    following_count = serializers.SerializerMethodField()
     class Meta:
         model = Seeker
-        fields = ['user', 'experience', 'location', 'technologies', 'saved_count', 'apply_count']
+        fields = ['user', 'experience', 'location', 'technologies', 'saved_count', 'apply_count', 'following_count']
 
     def get_saved_count(self, obj):
         # Đếm số lượng việc làm đã lưu cho seeker hiện tại
@@ -42,15 +53,30 @@ class SeekerSerializer(serializers.ModelSerializer):
         # Đếm số lượng việc làm đã lưu cho seeker hiện tại
         return JobApplication.objects.filter(seeker=obj.user).count()
 
+    def get_following_count(self, obj):
+        # Đếm số lượng người dùng mà seeker hiện tại đang theo dõi
+        return Follow.objects.filter(follower=obj.user).count()
+
 
 class UserSerializer(ModelSerializer):
     employer = EmployerSerializer(read_only=True)
     seeker = SeekerSerializer(read_only=True)
     role = serializers.ChoiceField(choices=[(role.value, role.name) for role in UserRole])
+    followed = serializers.SerializerMethodField()
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['avatar'] = instance.avatar.url
+        return rep
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "password", "avatar", "role",  "employer", "seeker"]
+        fields = ["id", "username", "email", "password", "avatar", "role",  "employer", "seeker", "followed"]
 
+    def get_followed(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return Follow.objects.filter(follower=request.user, following=obj).exists()
+        return False
 
     def create(self, validated_data):
         role_value = validated_data.pop('role')
@@ -75,7 +101,8 @@ class JobCreateSerializer(serializers.ModelSerializer):
     )
     class Meta:
         model = Job
-        fields = ['title', 'description', 'requirements', 'location', 'salary', 'expiration_date', 'experience', 'technologies', 'is_active']
+        fields = ['title', 'description', 'requirements', 'location', 'location_detail', 'salary', 'expiration_date', 'experience', 'technologies', 'is_active', 'quantity', 'latitude', 'longitude']
+
 
 class JobSerializer(serializers.ModelSerializer):
     employer = UserSerializer(read_only=True)
@@ -85,7 +112,7 @@ class JobSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Job
-        fields = ['id', 'employer', 'title', 'location', 'salary', 'experience', 'technologies', 'created_at', 'expiration_date', 'description', 'requirements', 'is_saved', 'is_applied']
+        fields = ['id', 'employer', 'title', 'location', 'location_detail', 'salary', 'experience', 'technologies', 'expiration_date', 'description', 'requirements', 'is_saved', 'is_applied', 'quantity', 'is_active', 'latitude', 'longitude']
         read_only_fields = ['created_at', 'id']
 
     def get_is_saved(self, obj):
@@ -112,22 +139,23 @@ class SaveJobSerializer(ModelSerializer):
 
 
 class JobApplicationCreateSerializer(serializers.ModelSerializer):
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['cv'] = instance.cv.url
+        return rep
     class Meta:
         model = JobApplication
         fields = ['cover_letter', 'cv', "name", "phone", "email"]
 
 
-class JobApplicationDetailSerializer(serializers.ModelSerializer):
-    seeker = UserSerializer(read_only=True)
-    cv = serializers.FileField(read_only=True)
-
-    class Meta:
-        model = JobApplication
-        fields = ['seeker', 'cv']
-
 class JobApplicationSerializer(ModelSerializer):
     job = JobSerializer()
     seeker = UserSerializer()
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['cv'] = instance.cv.url
+        return rep
 
     class Meta:
         model = JobApplication
@@ -138,6 +166,10 @@ class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
     job = serializers.SerializerMethodField()
     seeker_info = serializers.SerializerMethodField()
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['cv'] = instance.cv.url
+        return rep
     class Meta:
         model = JobApplication
         fields = ['id', 'job', 'seeker_info', 'status', 'created_at', "cover_letter", "cv", "status", "name", "phone", "email"]
@@ -163,5 +195,18 @@ class FollowSerializer(serializers.ModelSerializer):
         model = Follow
         fields = ['follower', 'following']
 
+
+class ServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Service
+        fields = '__all__'
+
+
+class PurchaseServiceSerializer(serializers.ModelSerializer):
+    service_id = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all(), source='service')
+
+    class Meta:
+        model = EmployerService
+        fields = ['service_id']
 
 
