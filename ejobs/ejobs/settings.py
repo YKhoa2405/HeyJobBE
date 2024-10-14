@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-xxz7qha7x1^g#&dg!8zk8)!_n!(g7+lvs^2x=6(9c%z9yq&%au
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['192.168.1.120']
 
 
 # Application definition
@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'storages',
     's3direct',
     'vnpay',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
@@ -55,11 +56,15 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
+CORS_ALLOW_ALL_ORIGINS = True
+
+
 REST_FRAMEWORK = {
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 4,
+    # 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # 'PAGE_SIZE': 4,
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
     )
@@ -82,13 +87,15 @@ DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 VNPAY_TMN_CODE = 'RYRPHBC7'
 VNPAY_HASH_SECRET_KEY = 'LSGEMXZTYBHZGAXSGPZSMXWMYPQSVAJS'
 VNPAY_PAYMENT_URL = 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html'
-VNPAY_RETURN_URL = 'http://127.0.0.1:8000/vnpay/payment_return/'
+VNPAY_RETURN_URL = 'http://192.168.1.120:8000/vnpay/payment_return/'
 
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES = [
     {
+
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'jobs', 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -163,5 +170,10 @@ STATIC_ROOT = os.path.join(BASE_DIR, "static")
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'  # hoặc bất kỳ dịch vụ email nào bạn đang dùng
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = '2151050202khoa@ou.edu.vn'  # địa chỉ email của bạn
+EMAIL_HOST_PASSWORD = 'caichyrua11'     # mật khẩu của email
 

@@ -1,0 +1,12 @@
+<!-- templates/admin/index.html -->
+{% extends "admin/index.html" %}
+
+{% block content %}
+  <h1>Trang chính quản trị</h1>
+  <div style="margin-top: 20px; margin-bottom:20px">
+    <a href="{% url 'admin:stats_user' %}" class="button big-button">Thống kê người dùng</a>
+    <a href="{% url 'admin:stats_job' %}" class="button big-button">Thống kê tuyển dụng</a>
+
+  </div>
+  {{ block.super }}  {# Giữ lại nội dung của trang admin mặc định #}
+{% endblock %}

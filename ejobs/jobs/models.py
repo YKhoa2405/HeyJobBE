@@ -30,7 +30,7 @@ class UserRole(Enum):
 
 
 class User(AbstractUser):
-    avatar = CloudinaryField()
+    avatar = CloudinaryField(null=True)
     email = models.EmailField(max_length=50, unique=True)
     is_active = models.BooleanField(default=True)
     role = EnumChoiceField(UserRole, default=None, null=True, blank=True)

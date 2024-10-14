@@ -1,6 +1,13 @@
 import hashlib
+
+from django.contrib.auth.hashers import make_password
+from django.core.cache import cache
+import random
 from datetime import timezone, timedelta, datetime
-from django.db.models import Q
+
+from django.core.mail import send_mail
+from django.db.models import Q, Sum, Count
+from django.db.models.functions import TruncMonth
 from vnpay.models import Billing
 from django.utils.timezone import now
 from django.utils import timezone
@@ -12,10 +19,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Job, User, Employer, Seeker, SaveJob, JobApplication, UserRole, CVStatus, Technology, Follow, \
     Service, EmployerService
+from .pagination import JobPaginator
 from .serializer import JobSerializer, UserSerializer, EmployerSerializer, SeekerSerializer, SaveJobSerializer, \
     JobApplicationSerializer, JobApplicationCreateSerializer, FilterCVJobApplicationSerializer, TechnologySerializer, \
-    JobCreateSerializer, FollowSerializer, ServiceSerializer, PurchaseServiceSerializer
+    JobCreateSerializer, FollowSerializer, ServiceSerializer, PurchaseServiceSerializer, EmployerServiceSerializer
 from django.conf import settings
+
+
 
 class IsEmployer(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -30,10 +40,10 @@ class IsSeeker(permissions.BasePermission):
 
 
 class TechnologyViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Technology.objects.all()
+    queryset = Technology.objects.all().order_by('id')  # Sort by id
     serializer_class = TechnologySerializer
 
-
+otp_storage = {}
 class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.RetrieveAPIView):
     queryset = User.objects.filter(is_active=True)
     serializer_class = UserSerializer
@@ -152,6 +162,50 @@ class UserViewSet(viewsets.GenericViewSet, generics.CreateAPIView, generics.Retr
 
         return Response(users_data)
 
+    @action(detail=False, methods=['post'], url_path='send_otp')
+    def send_otp(self, request):
+        email = request.data.get("email")
+        user = User.objects.filter(email=email).first()
+
+        if user:
+            # Tạo mã OTP ngẫu nhiên
+            otp = random.randint(1000, 9999)
+            otp_storage[email] = (otp, timezone.now())  # Lưu OTP tạm thời
+
+            # Không cần cache, chỉ gửi OTP cùng thời gian sống
+            subject = "Mã OTP đặt lại mật khẩu"
+            message = f"Mã OTP của bạn là: {otp}. Mã này sẽ hết hạn sau 120 giây."
+            send_mail(subject, message, '2151050202khoa@ou.edu.vn', [email])
+
+            return Response(status=status.HTTP_200_OK)
+
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['post'], url_path='reset-password')
+    def reset_password(self, request):
+        email = request.data.get("email")
+        otp = request.data.get("otp")
+        new_password = request.data.get("new_password")
+
+        # Kiểm tra OTP
+        if email in otp_storage:
+            stored_otp, created_at = otp_storage[email]
+            if stored_otp == int(otp) and (timezone.now() - created_at).seconds < 120:
+                # Đổi mật khẩu
+                user = User.objects.get(email=email)
+                user.password = make_password(new_password)  # Mã hóa mật khẩu mới
+                user.save()
+
+                # Xóa OTP sau khi sử dụng
+                del otp_storage[email]
+
+                return Response(status=status.HTTP_200_OK)
+            else:
+                return Response({"detail": "Mã OTP không hợp lệ hoặc đã hết hạn."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"detail": "Email không tồn tại hoặc OTP không được gửi."}, status=status.HTTP_404_NOT_FOUND)
+
+
 
 class JobViewSet(viewsets.ModelViewSet):
     queryset = Job.objects.filter(is_active=True)
@@ -173,8 +227,14 @@ class JobViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='employer_jobs')
     def list_employer_jobs(self, request):
-        # Hiển thị danh sách công việc của nhà tuyển dụng hiện tại
         jobs = Job.objects.filter(employer=request.user).order_by('-is_active')
+        paginator = JobPaginator()
+        page = paginator.paginate_queryset(jobs, request)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
 
@@ -232,6 +292,7 @@ class JobViewSet(viewsets.ModelViewSet):
         seeker = request.user.seeker
         experience = seeker.experience
         location = seeker.location
+        technologies = seeker.technologies.values_list('id', flat=True)
 
         query = Q(is_active=True, expiration_date__gte=current_time)
 
@@ -239,10 +300,17 @@ class JobViewSet(viewsets.ModelViewSet):
             query &= Q(experience__icontains=experience)
         if location:
             query &= Q(location__icontains=location)
-
+        if technologies:  # Kiểm tra nếu seeker có công nghệ
+            query &= Q(technologies__id__in=technologies)
         jobs = Job.objects.filter(query).distinct()
 
-        # Sử dụng serializer để trả về dữ liệu
+        paginator = JobPaginator()  # Tạo đối tượng phân trang
+        page = paginator.paginate_queryset(jobs, request)  # Phân trang danh sách công việc
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)  # Trả về kết quả đã phân trang
+
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
 
@@ -255,6 +323,13 @@ class JobViewSet(viewsets.ModelViewSet):
             expiration_date__gte=current_time,
             salary__in=['20 - 25 triệu', '25 - 30 triệu', '30 - 50 triệu', 'Trên 50 triệu']
         ).order_by('-salary')[:20]  # Lấy 20 công việc có mức lương cao nhất
+
+        paginator = JobPaginator()  # Tạo một đối tượng phân trang
+        page = paginator.paginate_queryset(jobs, request)  # Phân trang danh sách công việc
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
 
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
@@ -365,6 +440,14 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
 
         # Lấy các đơn ứng tuyển cho các công việc này
         applications = JobApplication.objects.filter(job__in=jobs, status=CVStatus.OPEN)
+        # Phân trang các đơn ứng tuyển
+        paginator = JobPaginator()
+        paginated_applications = paginator.paginate_queryset(applications, request)
+
+        # Nếu có đơn ứng tuyển được phân trang
+        if paginated_applications is not None:
+            serializer = FilterCVJobApplicationSerializer(paginated_applications, many=True)
+            return paginator.get_paginated_response(serializer.data)
         serializer = FilterCVJobApplicationSerializer(applications, many=True)
         return Response(serializer.data)
 
@@ -378,6 +461,15 @@ class JobApplicationViewSet(viewsets.GenericViewSet, generics.UpdateAPIView, gen
 
         # Lấy các đơn ứng tuyển cho các công việc này
         applications = JobApplication.objects.filter(job__in=jobs, status__in=[CVStatus.PENDING, CVStatus.CLOSED])
+
+        paginator = JobPaginator()
+        paginated_applications = paginator.paginate_queryset(applications, request)
+
+        # Nếu có đơn ứng tuyển được phân trang
+        if paginated_applications is not None:
+            serializer = FilterCVJobApplicationSerializer(paginated_applications, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
         serializer = FilterCVJobApplicationSerializer(applications, many=True)
         return Response(serializer.data)
 
@@ -464,39 +556,138 @@ class ServiceViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'])
     def purchase(self, request, pk):
         service = Service.objects.get(pk=pk)
-        user = request.user  # Assuming the user has an associated Employer profile
+        user = request.user  # Người dùng đã xác thực
+
+        # Kiểm tra thông tin hóa đơn
+        transaction_no = request.data.get("vnp_TransactionNo")
+        if not transaction_no:
+            return Response({"message": "Mã giao dịch không hợp lệ"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            bill = Billing.objects.get(reference_number=request.data.get("vnp_TransactionNo"))
+            bill = Billing.objects.get(reference_number=transaction_no)
         except Billing.DoesNotExist:
             return Response({"message": "Hóa đơn không tồn tại"}, status=status.HTTP_400_BAD_REQUEST)
-        if bill:
-            bill.result_payment = request.data.get("vnp_TransactionStatus")
-            bill.is_paid = request.data.get("vnp_TransactionStatus") == "00"
-            bill.transaction_id = request.data.get("vnp_TransactionNo")
-            pay_at_str = request.data.get("vnp_PayDate")
+
+        # Cập nhật thông tin hóa đơn
+        bill.result_payment = request.data.get("vnp_TransactionStatus")
+        bill.is_paid = bill.result_payment == "00"  # Kiểm tra trạng thái thanh toán
+        bill.transaction_id = transaction_no
+        pay_at_str = request.data.get("vnp_PayDate")
+
+        if pay_at_str:
             bill.pay_at = datetime.strptime(pay_at_str, '%Y%m%d%H%M%S')
-            bill.save()
+        bill.save()
 
-            existing_service = EmployerService.objects.filter(user=user, service=service,
-                                                          is_active=True).first()
-            if existing_service:
-                # Update the end_date if the service is already active
-                existing_service.end_date = timezone.now() + timedelta(
-                    days=30 * service.duration)  # Adjust duration as needed
-                existing_service.save()
-                return Response({'status': 'Service updated'}, status=status.HTTP_200_OK)
+        # Kiểm tra dịch vụ đã tồn tại
+        existing_service = EmployerService.objects.filter(user=user, service=service, is_active=True).first()
 
-            # Create a new EmployerService record
-            end_date = timezone.now() + timedelta(days=30 * service.duration)  # Adjust duration as needed
-            EmployerService.objects.create(
-                user=user,
-                service=service,
-                end_date=end_date,
-                amount=service.price,
+        if existing_service:
+            # Cập nhật ngày kết thúc nếu dịch vụ đã hoạt động
+            existing_service.end_date = timezone.now() + timedelta(
+                days=30 * service.duration)  # Điều chỉnh thời gian nếu cần
+            existing_service.save()
+            return Response({'status': 'Dịch vụ đã được cập nhật'}, status=status.HTTP_200_OK)
+
+        # Tạo bản ghi EmployerService mới
+        end_date = timezone.now() + timedelta(days=30 * service.duration)  # Điều chỉnh thời gian nếu cần
+        EmployerService.objects.create(
+            user=user,
+            service=service,
+            end_date=end_date,
+            amount=service.price,
+        )
+
+        return Response({'status': 'Dịch vụ đã được mua'}, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'])
+    def purchased_services(self, request):
+        user = request.user  # Lấy người dùng đã xác thực
+
+        # Lấy danh sách dịch vụ đã mua của người dùng
+        purchased_services = EmployerService.objects.filter(user=user).select_related('service')
+
+        # Chuyển đổi danh sách dịch vụ thành serializer
+        serializer = EmployerServiceSerializer(purchased_services, many=True)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class EmployerStatisticsViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]  # Chỉ cho phép người dùng đã xác thực
+
+    def _has_active_service(self, employer_id):
+        # Kiểm tra xem nhà tuyển dụng có dịch vụ với tên "Thống kê" và còn hoạt động không
+        active_service = EmployerService.objects.filter(
+            user_id=employer_id,
+            service__id=2,
+            is_active=True
+        ).exists()
+        return active_service
+    def list(self, request):
+        employer_id = request.user.id
+        if not self._has_active_service(employer_id):
+            return Response({'detail': 'Bạn chưa mua dịch vụ "Thống kê" hoặc dịch vụ đã hết hạn.'}, status=status.HTTP_403_FORBIDDEN)
+        year = request.query_params.get('year')
+
+        # Đếm số lượng công việc đang hoạt động (is_active = True)
+        active_jobs_count = Job.objects.filter(employer_id=employer_id, is_active=True).count()
+
+        # Đếm số lượng công việc đã hết hạn
+        expired_jobs_count = Job.objects.filter(employer_id=employer_id, is_active=False).count()
+
+
+        total_spent_on_services = Billing.objects.filter(pay_by=employer_id).aggregate(total=Sum('amount'))['total'] or 0
+
+        # Tổng số đơn ứng tuyển theo tháng
+        applications_per_month_query = JobApplication.objects.filter(job__employer_id=employer_id)
+        if year:
+            applications_per_month_query = applications_per_month_query.filter(created_date__year=year)
+
+        applications_per_month = applications_per_month_query \
+            .annotate(month=TruncMonth('created_date')) \
+            .values('month') \
+            .annotate(applications_count=Count('id')) \
+            .order_by('month')
+        # Tạo dictionary thống kê
+        statistics = {      # Tổng số công việc đã đăng
+            'active_jobs': active_jobs_count,             # Số công việc đang hoạt động
+            'expired_jobs': expired_jobs_count,           # Số công việc đã hết hạn
+            'total_spent_on_services': total_spent_on_services,
+            'applications_per_month': list(applications_per_month)
+        }
+
+        return Response(statistics)
+
+    @action(detail=False, methods=['get'])
+    def applications_per_month(self, request):
+        employer_id = request.user.id
+        if not self._has_active_service(employer_id):
+            return Response({'detail': 'Bạn chưa mua dịch vụ "Thống kê" hoặc dịch vụ đã hết hạn.'}, status=status.HTTP_403_FORBIDDEN)
+
+        year = request.query_params.get('year')  # Lấy tham số năm từ request
+        month = request.query_params.get('month')  # Lấy tham số tháng từ request
+
+        # Lọc tất cả các job của employer hiện tại
+        jobs_queryset = Job.objects.filter(employer_id=employer_id)
+
+        # Lọc các Job theo thời gian tạo việc làm
+        if year:
+            jobs_queryset = jobs_queryset.filter(created_date__year=year)
+        if month:
+            jobs_queryset = jobs_queryset.filter(created_date__month=month)
+
+        # Đếm số lượng đơn ứng tuyển theo từng công việc
+        job_applications_counts = jobs_queryset.annotate(
+            applications_count=Count(
+                'jobapplication',
+                filter=Q(jobapplication__created_date__year=year) & Q(jobapplication__created_date__month=month) if month else
+                Q(jobapplication__created_date__year=year)
             )
-            return Response({'status': 'Service purchased'}, status=status.HTTP_201_CREATED)
+        ).values('title', 'applications_count').order_by('title')
 
+        return Response({
+            'job_applications_counts': list(job_applications_counts)
+        })
 
 
 

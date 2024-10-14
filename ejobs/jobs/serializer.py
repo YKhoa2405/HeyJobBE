@@ -11,20 +11,13 @@ class TechnologySerializer(ModelSerializer):
 
 
 class EmployerSerializer(ModelSerializer):
-    job_count = serializers.SerializerMethodField()
     pending_cv_count = serializers.SerializerMethodField()
     accepted_cv_count = serializers.SerializerMethodField()
     followers_count = serializers.SerializerMethodField()
 
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        rep['business_document'] = instance.avatar.url
-        return rep
     class Meta:
         model = Employer
-        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status', 'job_count', 'pending_cv_count', 'accepted_cv_count', 'followers_count', 'business_document']
-    def get_job_count(self, obj):
-        return Job.objects.count()  # Assuming the related name for Job model is 'jobs'
+        fields = ['user', 'company_name', 'website', 'size', 'address', 'description', 'approval_status', 'pending_cv_count', 'accepted_cv_count', 'followers_count', 'business_document']
 
     def get_pending_cv_count(self, obj):
         return JobApplication.objects.filter(job__employer=obj.user, status=CVStatus.PENDING).count()
@@ -37,25 +30,11 @@ class EmployerSerializer(ModelSerializer):
 
 
 class SeekerSerializer(serializers.ModelSerializer):
-    technologies = TechnologySerializer(many=True)
-    saved_count = serializers.SerializerMethodField()  # Thêm trường để đếm số lượng việc làm đã lưu
-    apply_count = serializers.SerializerMethodField()  # Thêm trường để đếm số lượng việc làm đã lưu
-    following_count = serializers.SerializerMethodField()
+    technologies = TechnologySerializer(many=True, read_only=True)
     class Meta:
         model = Seeker
-        fields = ['user', 'experience', 'location', 'technologies', 'saved_count', 'apply_count', 'following_count']
+        fields = ['user', 'experience', 'location', 'technologies']
 
-    def get_saved_count(self, obj):
-        # Đếm số lượng việc làm đã lưu cho seeker hiện tại
-        return SaveJob.objects.filter(seeker=obj.user).count()
-
-    def get_apply_count(self, obj):
-        # Đếm số lượng việc làm đã lưu cho seeker hiện tại
-        return JobApplication.objects.filter(seeker=obj.user).count()
-
-    def get_following_count(self, obj):
-        # Đếm số lượng người dùng mà seeker hiện tại đang theo dõi
-        return Follow.objects.filter(follower=obj.user).count()
 
 
 class UserSerializer(ModelSerializer):
@@ -99,6 +78,8 @@ class JobCreateSerializer(serializers.ModelSerializer):
         queryset=Technology.objects.all(),
         many=True
     )
+    # technologies = TechnologySerializer(many=True)
+
     class Meta:
         model = Job
         fields = ['title', 'description', 'requirements', 'location', 'location_detail', 'salary', 'expiration_date', 'experience', 'technologies', 'is_active', 'quantity', 'latitude', 'longitude']
@@ -186,7 +167,7 @@ class FilterCVJobApplicationSerializer(serializers.ModelSerializer):
         return {
             'id': seeker.id,
             'email': seeker.email,  # Hoặc bất kỳ thông tin nào bạn muốn hiển thị
-            'username': seeker.username
+            'username': seeker.username,
         }
 
 
@@ -209,4 +190,8 @@ class PurchaseServiceSerializer(serializers.ModelSerializer):
         model = EmployerService
         fields = ['service_id']
 
+class EmployerServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployerService
+        fields = '__all__'
 

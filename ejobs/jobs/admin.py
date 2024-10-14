@@ -1,45 +1,41 @@
 from django.contrib import admin
-from django import forms
-from .models import Job, User, JobApplication, Seeker, Employer, SaveJob, Technology, Follow, Service, EmployerService
+
+from .models import Job, User, JobApplication, Employer, Technology, Service
 
 
 class UserAdmin(admin.ModelAdmin):
     list_display = ['id', 'username', 'role', 'is_active']
-
-
-class SeekerAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user']
+    search_fields = ['username', 'email']
+    list_filter = ['role', 'is_active']
+    ordering = ['-id']  # Sắp xếp theo id giảm dần
 
 
 class EmployerAdmin(admin.ModelAdmin):
     list_display = ['id', 'company_name', 'user']
+    search_fields = ['company_name']
+    ordering = ['company_name']  # Sắp xếp theo tên công ty
+
+
+class JobAdmin(admin.ModelAdmin):
+    list_display = ['id', 'title', 'employer']
+    search_fields = ['title']
+    list_filter = ['employer']
 
 
 class ApplyJobAdmin(admin.ModelAdmin):
     list_display = ['id', 'seeker', 'job', 'status']
 
 
-class JobAdmin(admin.ModelAdmin):
-    list_display = ['id', 'title', 'employer']
-
-
-class SaveJobAdmin(admin.ModelAdmin):
-    list_display = ['seeker', 'job', 'created_date']
-
-
 class TechnologyAdmin(admin.ModelAdmin):
     list_display = ['id', 'name']
 
 
-admin.site.register(Seeker, SeekerAdmin)
+
 admin.site.register(User, UserAdmin)
 admin.site.register(Employer, EmployerAdmin)
-admin.site.register(SaveJob, SaveJobAdmin)
 admin.site.register(Job, JobAdmin)
 admin.site.register(JobApplication, ApplyJobAdmin)
 admin.site.register(Technology)
-admin.site.register(Follow)
 admin.site.register(Service)
-admin.site.register(EmployerService)
 
 
